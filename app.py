@@ -128,6 +128,8 @@ def init_state() -> None:
     ss.setdefault("scope_confirmed", {})
     ss.setdefault("selected_policy", None)
     ss.setdefault("anthropic_comparisons", {})
+    ss.setdefault("district_library", {})
+    ss.setdefault("active_district", "")
 
 
 def _active_report() -> dict | None:
@@ -217,7 +219,21 @@ def sidebar() -> None:
             unsafe_allow_html=True,
         )
         st.markdown("---")
-        if ss.district_name:
+        if ss.district_library:
+            district_options = list(ss.district_library.keys())
+            active = ss.active_district if ss.active_district in district_options else district_options[0]
+            chosen = st.selectbox("Switch district", district_options,
+                index=district_options.index(active), key="district_switcher")
+            if chosen != ss.active_district:
+                ss.active_district = chosen
+                ss.district_name = chosen
+                ss.report = ss.district_library[chosen]
+                ss.report_amended = None
+                ss.show_amended = False
+                if "_amend_toggle" in ss: del ss["_amend_toggle"]
+                ss.view = "report"
+                st.rerun()
+        elif ss.district_name:
             st.caption(f"District: {ss.district_name}")
             st.markdown("---")
 
@@ -558,6 +574,9 @@ def view_upload() -> None:
             st.session_state.district_source = f"Upload: {up.name}"
             if not st.session_state.district_name:
                 st.session_state.district_name = os.path.splitext(up.name)[0]
+            district_key = st.session_state.district_name
+            st.session_state.district_library[district_key] = st.session_state.report
+            st.session_state.active_district = district_key
             st.session_state.view = "report"
         finally:
             try:
