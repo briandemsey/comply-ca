@@ -26,6 +26,7 @@ from ca_rubric import build_rubric, MODULES
 
 HERE = Path(__file__).parent
 LOGO = HERE / "assets" / "csba_logo.png"
+DISTRICTS_DIR = HERE / "districts"
 
 MODULE_ORDER = list(MODULES.keys())
 
@@ -130,6 +131,52 @@ def init_state() -> None:
     ss.setdefault("anthropic_comparisons", {})
     ss.setdefault("district_library", {})
     ss.setdefault("active_district", "")
+    ss.setdefault("_districts_preloaded", False)
+    if not ss._districts_preloaded:
+        _preload_districts(ss)
+        ss._districts_preloaded = True
+
+
+def run_text(text: str) -> dict:
+    """Run the CA compliance engine on a raw text string."""
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as tmp:
+        tmp.write(text)
+        path = tmp.name
+    try:
+        return run(path)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _pretty_district(slug: str) -> str:
+    return slug.replace("-", " ").replace("_", " ").title()
+
+
+def _preload_districts(ss) -> None:
+    """Load any district manuals from districts/ into the library on first run."""
+    if not DISTRICTS_DIR.exists():
+        return
+    for district_dir in sorted(DISTRICTS_DIR.iterdir()):
+        if not district_dir.is_dir():
+            continue
+        slug = district_dir.name
+        label = _pretty_district(slug)
+        if label in ss.district_library:
+            continue
+        for f in sorted(district_dir.glob("*.txt")) or sorted(district_dir.glob("*.md")):
+            text = f.read_text(encoding="utf-8", errors="ignore")
+            with st.spinner(f"Loading {label} policy manual..."):
+                report = run_text(text)
+            ss.district_library[label] = report
+            if not ss.active_district:
+                ss.active_district = label
+                ss.district_name = label
+                ss.report = report
+            break
 
 
 def _active_report() -> dict | None:
@@ -552,8 +599,9 @@ def view_upload() -> None:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.session_state.district_name = st.text_input(
-            "District name", value=st.session_state.district_name or "")
+        entered_name = st.text_input(
+            "District name", value="", key="upload_district_name")
+        st.session_state.district_name = entered_name
     with col_b:
         st.selectbox("State", ["California"], index=0)
 
@@ -572,9 +620,8 @@ def view_upload() -> None:
             with st.spinner(f"Examining {up.name} against CA AI law — this may take a minute..."):
                 st.session_state.report = run(path)
             st.session_state.district_source = f"Upload: {up.name}"
-            if not st.session_state.district_name:
-                st.session_state.district_name = os.path.splitext(up.name)[0]
-            district_key = st.session_state.district_name
+            district_key = entered_name.strip() or os.path.splitext(up.name)[0]
+            st.session_state.district_name = district_key
             st.session_state.district_library[district_key] = st.session_state.report
             st.session_state.active_district = district_key
             st.session_state.view = "report"
