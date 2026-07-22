@@ -49,7 +49,7 @@ def _render_header() -> None:
     left, right = st.columns([3, 2])
     with left:
         if LOGO.exists():
-            st.image(str(LOGO), use_column_width=True)
+            st.image(str(LOGO), width=420)
     with right:
         st.markdown(
             f'<div style="display:flex;justify-content:flex-end;align-items:center;'
