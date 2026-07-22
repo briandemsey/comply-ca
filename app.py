@@ -157,7 +157,7 @@ def _pretty_district(slug: str) -> str:
 
 
 def _preload_districts(ss) -> None:
-    """Load any district manuals from districts/ into the library on first run."""
+    """Load pre-computed district reports from districts/<slug>/<slug>_report.json."""
     if not DISTRICTS_DIR.exists():
         return
     for district_dir in sorted(DISTRICTS_DIR.iterdir()):
@@ -167,16 +167,16 @@ def _preload_districts(ss) -> None:
         label = _pretty_district(slug)
         if label in ss.district_library:
             continue
-        for f in sorted(district_dir.glob("*.txt")) or sorted(district_dir.glob("*.md")):
-            text = f.read_text(encoding="utf-8", errors="ignore")
-            with st.spinner(f"Loading {label} policy manual..."):
-                report = run_text(text)
-            ss.district_library[label] = report
-            if not ss.active_district:
-                ss.active_district = label
-                ss.district_name = label
-                ss.report = report
-            break
+        report_file = district_dir / f"{slug}_report.json"
+        if not report_file.exists():
+            continue
+        import json as _json
+        report = _json.loads(report_file.read_text(encoding="utf-8"))
+        ss.district_library[label] = report
+        if not ss.active_district:
+            ss.active_district = label
+            ss.district_name = label
+            ss.report = report
 
 
 def _active_report() -> dict | None:
