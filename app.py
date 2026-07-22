@@ -16,8 +16,12 @@ SB 942 / SB 243 / AB 2013, FERPA / COPPA / IDEA / Title VI / Title IX.
 
 import re
 import io
+from pathlib import Path
 import streamlit as st
 from datetime import date, datetime
+
+HERE = Path(__file__).parent
+LOGO = HERE / "assets" / "csba_logo.png"
 
 # ── brand ──────────────────────────────────────────────────────────────────
 CA_BLUE   = "#003DA5"
@@ -1008,6 +1012,23 @@ def _build_gap_report(scores):
 # ══════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════
+def _render_header() -> None:
+    left, right = st.columns([2, 3])
+    with left:
+        if LOGO.exists():
+            st.image(str(LOGO), width=260)
+    with right:
+        st.markdown(
+            '<div style="display:flex;justify-content:flex-end;align-items:center;height:100%;padding-top:24px">'
+            '<span style="display:inline-block;font-size:12px;font-weight:700;'
+            'background:#f7dede;color:#8a2f2f;border:1px solid #e6b7b7;'
+            'padding:6px 12px;border-radius:6px;text-transform:uppercase;letter-spacing:.04em">'
+            'Prototype for CSBA review — not an official CSBA product'
+            '</span></div>',
+            unsafe_allow_html=True,
+        )
+
+
 def main():
     st.set_page_config(
         page_title="COMPLY-CA | H-EDU.Solutions",
@@ -1017,6 +1038,7 @@ def main():
     )
     init_state()
     inject_css()
+    _render_header()
 
     # Header
     st.markdown(f"""
