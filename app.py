@@ -132,6 +132,10 @@ def init_state() -> None:
     ss.setdefault("district_library", {})
     ss.setdefault("active_district", "")
     ss.setdefault("_districts_preloaded", False)
+    ss.setdefault("manual_text", None)         # full text of uploaded manual
+    ss.setdefault("policies", None)            # {code: {title, report}} per-policy
+    ss.setdefault("district_policies", {})     # district_label -> policies dict
+    ss.setdefault("selected_policy_code", None)  # code clicked in per-policy report
     if not ss._districts_preloaded:
         _preload_districts(ss)
         ss._districts_preloaded = True
@@ -173,10 +177,14 @@ def _preload_districts(ss) -> None:
         import json as _json
         report = _json.loads(report_file.read_text(encoding="utf-8"))
         ss.district_library[label] = report
+        policies_file = district_dir / f"{slug}_policies.json"
+        if policies_file.exists():
+            ss.district_policies[label] = _json.loads(policies_file.read_text(encoding="utf-8"))
         if not ss.active_district:
             ss.active_district = label
             ss.district_name = label
             ss.report = report
+            ss.policies = ss.district_policies.get(label)
 
 
 def _active_report() -> dict | None:
@@ -275,6 +283,8 @@ def sidebar() -> None:
                 ss.active_district = chosen
                 ss.district_name = chosen
                 ss.report = ss.district_library[chosen]
+                ss.policies = ss.district_policies.get(chosen)
+                ss.selected_policy_code = None
                 ss.report_amended = None
                 ss.show_amended = False
                 if "_amend_toggle" in ss: del ss["_amend_toggle"]
@@ -618,12 +628,32 @@ def view_upload() -> None:
             path = tmp.name
         try:
             with st.spinner(f"Examining {up.name} against CA AI law — this may take a minute..."):
+                raw_text = parse_document(path)
+                st.session_state.manual_text = raw_text
                 st.session_state.report = run(path)
-            st.session_state.district_source = f"Upload: {up.name}"
             district_key = entered_name.strip() or os.path.splitext(up.name)[0]
+            st.session_state.district_source = f"Upload: {up.name}"
             st.session_state.district_name = district_key
             st.session_state.district_library[district_key] = st.session_state.report
             st.session_state.active_district = district_key
+            # Build per-policy reports from the manual
+            pol_map = _split_manual_policies(raw_text)
+            if pol_map:
+                per_pol = {}
+                total = len(pol_map)
+                prog = st.progress(0, text="Measuring individual policies...")
+                for idx, (code, pd) in enumerate(pol_map.items()):
+                    try:
+                        per_pol[code] = {"title": pd["title"], "report": measure_text(pd["text"])}
+                    except Exception:
+                        pass
+                    prog.progress((idx + 1) / total, text=f"Measuring {code}... ({idx+1}/{total})")
+                prog.empty()
+                st.session_state.policies = per_pol
+                st.session_state.district_policies[district_key] = per_pol
+            else:
+                st.session_state.policies = None
+            st.session_state.selected_policy_code = None
             st.session_state.view = "report"
         finally:
             try:
@@ -668,7 +698,48 @@ def view_report() -> None:
         c3.markdown(f'<div class="tile"><div class="n">{stat["addressed"]}/{stat["total"]}</div><div class="lbl">Statutory</div></div>', unsafe_allow_html=True)
         c4.markdown(f'<div class="tile"><div class="n">{enact["addressed"]}/{enact["total"]}</div><div class="lbl">Enacted</div></div>', unsafe_allow_html=True)
 
-        # Per-domain scoreboard
+        # Per-policy scoreboard (when per-policy data is available)
+        if ss.policies:
+            col_chk, col_hint = st.columns([3, 2])
+            with col_chk:
+                show_only_gaps = st.checkbox("Show only policies with gaps", value=False)
+            with col_hint:
+                st.markdown(
+                    "<span style='font-size:15px;font-weight:900'>"
+                    "✅ CLICK OPEN TO GENERATE POLICY DETAIL"
+                    "</span>", unsafe_allow_html=True
+                )
+            st.markdown("### Per-policy compliance")
+            for code, pd in ss.policies.items():
+                pr = pd["report"]
+                ps = pr["score"]
+                addressed = ps["must_pass_addressed"]
+                total_mp = ps["must_pass_total"]
+                ok = ps["within_ca_threshold"]
+                if show_only_gaps and ok:
+                    continue
+                pri = "Low" if ok else ("Medium" if addressed >= total_mp // 2 else "High")
+                cols = st.columns([1, 5, 2])
+                with cols[0]:
+                    st.markdown(f'<span class="badge b-{pri}">{pri}</span>', unsafe_allow_html=True)
+                with cols[1]:
+                    st.markdown(
+                        f'<div class="polcard">'
+                        f'<span class="code">{code}</span> · <b>{pd["title"]}</b>'
+                        f'<div class="rat">'
+                        f'<span style="color:{STAT}">✓ {addressed}</span> must-pass addressed'
+                        f' &nbsp;·&nbsp; <span style="color:{CONT}">{total_mp - addressed}</span> gaps'
+                        f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                with cols[2]:
+                    if st.button("Open", key=f"open_pol_{code}"):
+                        ss.selected_policy_code = code
+                        ss.view = "detail"
+                        st.rerun()
+            return
+
+        # Per-domain scoreboard (fallback when no per-policy data)
         st.markdown("### Domain scoreboard")
         results = [r for r in rep["results"]]
         by_module: dict[str, list] = {}
@@ -706,10 +777,119 @@ def view_report() -> None:
 
 
 # ── view: policy detail ────────────────────────────────────────────────────────
+def _split_manual_policies(text: str) -> dict:
+    """Split a full manual into {code: {title, text}} by POLICY CODE -- Title headers."""
+    import re as _re
+    pattern = _re.compile(r'(?m)^POLICY\s+(\S+)\s+--\s+(.+)$')
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return {}
+    result = {}
+    for i, m in enumerate(matches):
+        code = m.group(1).strip()
+        title = m.group(2).strip().rstrip("\r")
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        result[code] = {"title": title, "text": text[start:end].strip()}
+    return result
+
+
+def _build_policy_additions(gaps: list[dict]) -> str:
+    if not gaps:
+        return ""
+    lines = ["", "---", "", "## Additions to satisfy California AI Policy Requirements", ""]
+    by_module: dict[str, list] = {}
+    for r in gaps:
+        by_module.setdefault(r["module"], []).append(r)
+    for m in MODULE_ORDER:
+        if m not in by_module:
+            continue
+        lines.append(f"### {m} — {MODULES[m]}")
+        lines.append("")
+        for r in by_module[m]:
+            lines.append(f"**[{r['id']} · {r['term']} · {r['ag_test_tier']} · {r['hook']}]**")
+            lines.append("")
+            lines.append(r.get("revision", ""))
+            lines.append("")
+    return "\n".join(lines)
+
+
 def view_detail() -> None:
     ss = st.session_state
     _ensure_amended()
     rep = _active_report()
+
+    # ── Per-policy detail (from per-policy Initial Report) ───────────────
+    if ss.selected_policy_code is not None and ss.policies is not None:
+        code = ss.selected_policy_code
+        pd = ss.policies.get(code)
+        if pd is None:
+            st.warning(f"Policy {code} not found in loaded policies.")
+            return
+        st.markdown('<div class="pill">SB 1288 · AB 2225 · CDE Model Policy</div>', unsafe_allow_html=True)
+        st.markdown(f"# {code} — {pd['title']}")
+        pol_rep = pd["report"]
+        gaps = [r for r in pol_rep["results"] if r["measured"]["status"] != "Addressed"]
+        original = pd["text"]
+        additions = _build_policy_additions(gaps)
+        amended = original.rstrip() + "\n\n" + additions if additions else original
+        col_b, col_a = st.columns(2)
+        with col_b:
+            st.markdown("**Before**")
+            st.markdown(
+                f'<div style="max-height:600px;overflow:auto;border:1px solid {LINE};border-radius:6px;'
+                f'padding:12px;background:#fafbfd;font-size:12.5px;white-space:pre-wrap;'
+                f'font-family:ui-monospace,Menlo,monospace">{_escape(original)}</div>',
+                unsafe_allow_html=True,
+            )
+        with col_a:
+            st.markdown("**After**")
+            before_len = len(original.rstrip())
+            st.markdown(
+                f'<div style="max-height:600px;overflow:auto;border:1px solid {LINE};border-radius:6px;'
+                f'padding:12px;background:#fafbfd;font-size:12.5px;white-space:pre-wrap;'
+                f'font-family:ui-monospace,Menlo,monospace">'
+                f'{_escape(amended[:before_len])}'
+                f'<span style="background:#e4f3e8;border-left:3px solid {STAT};'
+                f'display:block;padding:8px 10px;margin-top:8px">{_escape(amended[before_len:])}</span></div>',
+                unsafe_allow_html=True,
+            )
+        if gaps:
+            st.markdown(f"**{len(gaps)} gap(s) found across {len(pol_rep['results'])} criteria.**")
+            for r in gaps:
+                mm = r["measured"]
+                st_status = mm["status"]
+                badge_class = "b-Partial" if st_status == "Partial" else "b-NotAddressed"
+                icon = "🟡" if st_status == "Partial" else "🔴"
+                with st.expander(f"{icon} {r['id']} · {r['term']} — {st_status}  [{r['ag_test_tier']}]"):
+                    st.caption(f"{r['hook']} · {r['pass_semantics']}")
+                    if mm["evidence"]:
+                        st.markdown(
+                            f'<div class="ev"><b>{mm["evidence"]["heading"]}</b> — '
+                            f'"{mm["evidence"]["text"][:600]}"</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown('<div class="ev">No matching provision found.</div>', unsafe_allow_html=True)
+                    if mm["gap"]:
+                        st.markdown(f"**Gap:** missing {'; '.join(mm['gap'])}.")
+                    if r.get("revision"):
+                        st.markdown(
+                            f'<div class="rev"><b>Suggested language</b><br>"{r["revision"]}"</div>',
+                            unsafe_allow_html=True,
+                        )
+        else:
+            st.success("This policy satisfies all CA must-pass requirements.")
+        st.download_button(
+            "Download amended policy (Markdown)",
+            data=amended,
+            file_name=f"{code}_amended_ca.md",
+            mime="text/markdown",
+        )
+        if st.button("← Back to Initial Report"):
+            ss.view = "report"
+            st.rerun()
+        return
 
     if ss.selected_policy is None or rep is None:
         st.info("Select a domain from **Initial Report** to open its detail.")
