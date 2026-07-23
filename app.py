@@ -635,13 +635,40 @@ def view_load_amend() -> None:
 def view_upload() -> None:
     _render_header()
     st.markdown('<div class="pill">SB 1288 · AB 2225 · CDE Model Policy</div>', unsafe_allow_html=True)
-    st.markdown("# Upload Manual")
+    st.markdown("# Step 2 — Upload Manual")
     st.markdown(
         '<p class="sub">Upload your full district policy manual and get a scoreboard of every policy '
         'measured against California AI law — showing which pass, which are partial, and which need work.</p>',
         unsafe_allow_html=True,
     )
 
+    ss = st.session_state
+
+    # Show pre-baked districts in preferred order: Natomas first, Lodi second
+    DISTRICT_ORDER = ["Natomas", "Lodi"]
+    ordered = [d for d in DISTRICT_ORDER if d in ss.district_library]
+    ordered += [d for d in ss.district_library if d not in DISTRICT_ORDER]
+    if ordered:
+        st.markdown("### Districts on file")
+        for label in ordered:
+            col_name, col_btn = st.columns([6, 1])
+            with col_name:
+                st.markdown(f'**{label}**')
+            with col_btn:
+                if st.button("Load", key=f"upload_load_{label}"):
+                    ss.active_district = label
+                    ss.district_name = label
+                    ss.report = ss.district_library[label]
+                    ss.policies = ss.district_policies.get(label)
+                    ss.selected_policy_code = None
+                    ss.report_amended = None
+                    ss.show_amended = False
+                    if "_amend_toggle" in ss: del ss["_amend_toggle"]
+                    ss.view = "report"
+                    st.rerun()
+        st.markdown("---")
+
+    st.markdown("### Or provide your own policy manual")
     col_a, col_b = st.columns(2)
     with col_a:
         entered_name = st.text_input(
@@ -650,7 +677,6 @@ def view_upload() -> None:
     with col_b:
         st.selectbox("State", ["California"], index=0)
 
-    st.markdown("### Provide your policy manual")
     up = st.file_uploader(
         "Upload PDF, DOCX, TXT, or MD",
         type=["pdf", "docx", "txt", "md"],
