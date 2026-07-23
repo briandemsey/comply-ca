@@ -313,7 +313,7 @@ def sidebar() -> None:
         )
         st.button("Initial Report",          key="nav_report",   disabled=not manual_loaded,
                   on_click=lambda: ss.__setitem__("view", "report"))
-        st.button("Policy Detail",           key="nav_detail",   disabled=not (manual_loaded and ss.selected_policy),
+        st.button("Policy Detail",           key="nav_detail",   disabled=not (manual_loaded and (ss.selected_policy or ss.selected_policy_code)),
                   on_click=lambda: ss.__setitem__("view", "detail"))
         st.button("Compliance Overview",     key="nav_overview", disabled=not manual_loaded,
                   on_click=lambda: ss.__setitem__("view", "overview"))
