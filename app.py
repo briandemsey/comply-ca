@@ -912,7 +912,7 @@ def view_detail() -> None:
         amended = original.rstrip() + "\n\n" + additions if additions else original
         col_b, col_a = st.columns(2)
         with col_b:
-            st.markdown("**Before**")
+            st.markdown("**Before — existing policy**")
             st.markdown(
                 f'<div style="max-height:600px;overflow:auto;border:1px solid {LINE};border-radius:6px;'
                 f'padding:12px;background:#fafbfd;font-size:12.5px;white-space:pre-wrap;'
@@ -920,15 +920,12 @@ def view_detail() -> None:
                 unsafe_allow_html=True,
             )
         with col_a:
-            st.markdown("**After**")
-            before_len = len(original.rstrip())
+            st.markdown("**After — CA AI compliance additions**")
+            additions_only = additions.strip() if additions.strip() else "No additions needed — policy satisfies all CA must-pass requirements."
             st.markdown(
-                f'<div style="max-height:600px;overflow:auto;border:1px solid {LINE};border-radius:6px;'
-                f'padding:12px;background:#fafbfd;font-size:12.5px;white-space:pre-wrap;'
-                f'font-family:ui-monospace,Menlo,monospace">'
-                f'{_escape(amended[:before_len])}'
-                f'<span style="background:#e4f3e8;border-left:3px solid {STAT};'
-                f'display:block;padding:8px 10px;margin-top:8px">{_escape(amended[before_len:])}</span></div>',
+                f'<div style="max-height:600px;overflow:auto;border:1px solid {STAT};border-radius:6px;'
+                f'padding:12px;background:#e4f3e8;font-size:12.5px;white-space:pre-wrap;'
+                f'font-family:ui-monospace,Menlo,monospace">{_escape(additions_only)}</div>',
                 unsafe_allow_html=True,
             )
         if gaps:
