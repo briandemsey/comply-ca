@@ -164,7 +164,7 @@ def _preload_districts(ss) -> None:
     """Load pre-computed district reports from districts/<slug>/<slug>_report.json."""
     if not DISTRICTS_DIR.exists():
         return
-    for district_dir in sorted(DISTRICTS_DIR.iterdir()):
+    for district_dir in sorted(DISTRICTS_DIR.iterdir(), reverse=True):
         if not district_dir.is_dir():
             continue
         slug = district_dir.name
