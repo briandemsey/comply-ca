@@ -180,6 +180,12 @@ def _preload_districts(ss) -> None:
         policies_file = district_dir / f"{slug}_policies.json"
         if policies_file.exists():
             ss.district_policies[label] = _json.loads(policies_file.read_text(encoding="utf-8"))
+        # Store manual path for on-demand text extraction
+        manual_file = district_dir / f"{slug}_manual.txt"
+        if "district_manual_paths" not in ss:
+            ss["district_manual_paths"] = {}
+        if manual_file.exists():
+            ss["district_manual_paths"][label] = str(manual_file)
         if not ss.active_district:
             ss.active_district = label
             ss.district_name = label
@@ -830,7 +836,23 @@ def view_detail() -> None:
         st.markdown(f"# {code} — {pd['title']}")
         pol_rep = pd["report"]
         gaps = [r for r in pol_rep["results"] if r["measured"]["status"] != "Addressed"]
-        original = pd["text"]
+        # text may not be in pre-baked JSON — extract from manual_text or district manual
+        if "text" in pd:
+            original = pd["text"]
+        elif ss.get("manual_text"):
+            pol_map = _split_manual_policies(ss.manual_text)
+            original = pol_map.get(code, {}).get("text", "")
+        else:
+            # Load district manual from disk
+            manual_paths = ss.get("district_manual_paths", {})
+            manual_path = manual_paths.get(ss.district_name, "")
+            if manual_path:
+                raw = open(manual_path, encoding="utf-8").read()
+                ss["manual_text"] = raw
+                pol_map = _split_manual_policies(raw)
+                original = pol_map.get(code, {}).get("text", "")
+            else:
+                original = ""
         additions = _build_policy_additions(gaps)
         amended = original.rstrip() + "\n\n" + additions if additions else original
         col_b, col_a = st.columns(2)
