@@ -355,10 +355,39 @@ def view_load_amend() -> None:
     # ── Step 1: Load ──
     if cur == 1:
         st.markdown("### Step 1 — Load a policy")
-        st.markdown(
-            "Upload one policy document (PDF, DOCX, TXT, or MD). "
-            "To run the full-manual scoreboard, use **Upload Manual**."
-        )
+        ss = st.session_state
+        # Show pre-loaded district policies if available
+        if ss.get("policies") and ss.get("district_name"):
+            st.markdown(f"**Policies on file for {ss.district_name}**")
+            shown = 0
+            for code, pd in ss.policies.items():
+                s = pd["report"]["score"]
+                ok = s["within_ca_threshold"]
+                col_name, col_size, col_btn = st.columns([5, 2, 1])
+                with col_name:
+                    color = STAT if ok else CONT
+                    st.markdown(
+                        f'<span style="font-family:ui-monospace,Menlo,monospace;color:{color}">'
+                        f'{code} — {pd["title"]}</span>',
+                        unsafe_allow_html=True
+                    )
+                with col_size:
+                    st.markdown(
+                        f'<span style="color:{MUTED};font-size:13px">'
+                        f'{s["must_pass_addressed"]}/{s["must_pass_total"]} must-pass</span>',
+                        unsafe_allow_html=True
+                    )
+                with col_btn:
+                    if st.button("Load", key=f"load_pol_{code}"):
+                        ss.selected_policy_code = code
+                        ss.view = "detail"
+                        st.rerun()
+                shown += 1
+                if shown >= 10:
+                    st.caption(f"… and {len(ss.policies) - 10} more. See Initial Report for the full list.")
+                    break
+            st.markdown("---")
+        st.markdown("### Or upload your own single policy (PDF / DOCX / TXT / MD)")
         up = st.file_uploader("Single-policy upload", type=["pdf", "docx", "txt", "md"], key="la_upload")
         if up is not None:
             suffix = os.path.splitext(up.name)[1]
