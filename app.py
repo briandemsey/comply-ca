@@ -337,7 +337,7 @@ def view_load_amend() -> None:
     st.markdown('<div class="pill">SB 1288 · AB 2225 · CDE Model Policy</div>', unsafe_allow_html=True)
     st.markdown("# Load & Amend a Policy")
     st.markdown(
-        '<p class="sub">Single-policy workflow: <b>Load → Analyze → Amend (before/after) → Rationale</b>. '
+        '<p class="sub">Single-policy workflow: <b>Load → Analyze → Amend (before/after) → Rationale</b>.<br>'
         'Work one policy end to end; Upload Manual runs the scoreboard across your full policy set.</p>',
         unsafe_allow_html=True,
     )
