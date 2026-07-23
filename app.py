@@ -136,6 +136,7 @@ def init_state() -> None:
     ss.setdefault("policies", None)            # {code: {title, report}} per-policy
     ss.setdefault("district_policies", {})     # district_label -> policies dict
     ss.setdefault("selected_policy_code", None)  # code clicked in per-policy report
+    ss.setdefault("benchmark_results", {})     # {criterion_id: comparison text}
     if not ss._districts_preloaded:
         _preload_districts(ss)
         ss._districts_preloaded = True
@@ -319,6 +320,9 @@ def sidebar() -> None:
                   on_click=lambda: ss.__setitem__("view", "overview"))
         st.button("Gap Analysis & Revision", key="nav_gap",      disabled=not manual_loaded,
                   on_click=lambda: ss.__setitem__("view", "gap"))
+        policy_loaded = bool(ss.selected_policy or ss.selected_policy_code)
+        st.button("Benchmark Comparison",    key="nav_benchmark", disabled=not policy_loaded,
+                  on_click=lambda: ss.__setitem__("view", "benchmark"))
 
         if not manual_loaded:
             st.caption("Load a manual to unlock these views.")
@@ -1127,6 +1131,107 @@ def view_gap() -> None:
     )
 
 
+# ── view: benchmark comparison ──────────────────────────────────────────────
+def view_benchmark() -> None:
+    ss = st.session_state
+
+    # Determine which policy report to use
+    pol_rep = None
+    pol_name = None
+    pol_text = None
+
+    if ss.selected_policy_code and ss.policies:
+        code = ss.selected_policy_code
+        pd = ss.policies.get(code, {})
+        pol_rep = pd.get("report")
+        pol_name = f"{code} — {pd.get('title', code)}"
+        # Get policy text on demand
+        if "text" in pd:
+            pol_text = pd["text"]
+        elif ss.get("manual_text"):
+            pol_map = _split_manual_policies(ss.manual_text)
+            pol_text = pol_map.get(code, {}).get("text", "")
+        else:
+            manual_paths = ss.get("district_manual_paths", {})
+            manual_path = manual_paths.get(ss.district_name, "")
+            if manual_path:
+                raw = open(manual_path, encoding="utf-8").read()
+                ss["manual_text"] = raw
+                pol_map = _split_manual_policies(raw)
+                pol_text = pol_map.get(code, {}).get("text", "")
+    elif ss.la_policy_text:
+        pol_rep = ss.la_report
+        pol_name = ss.la_policy_name or "Loaded policy"
+        pol_text = ss.la_policy_text
+
+    if pol_rep is None:
+        st.info("Load or open a policy first to run a benchmark comparison.")
+        return
+
+    st.markdown('<div class="pill">SB 1288 · AB 2225 · CDE Model Policy</div>', unsafe_allow_html=True)
+    st.markdown("# Benchmark Comparison")
+    st.markdown(
+        f'<p class="sub">Compare <b>{pol_name}</b> against a model AI policy '
+        'to identify where district language aligns and where it could be strengthened.</p>',
+        unsafe_allow_html=True,
+    )
+
+    # Find domains with gaps in this policy
+    gaps = [r for r in pol_rep["results"] if r["measured"]["status"] != "Addressed"]
+    gap_modules = list(dict.fromkeys(r["module"] for r in gaps))  # preserve order, dedupe
+
+    if not gaps:
+        st.success("This policy satisfies all CA must-pass requirements — no gaps to benchmark.")
+        return
+
+    st.markdown(f"**{len(gap_modules)} domain(s) with gaps** in this policy. Select one to compare against the model policy.")
+    st.markdown("")
+
+    domain_options = [f"{m} — {MODULES[m]}" for m in gap_modules]
+    chosen = st.selectbox("Select domain to benchmark", domain_options, key="benchmark_domain")
+    chosen_module = chosen.split(" — ")[0]
+
+    domain_gaps = [r for r in gaps if r["module"] == chosen_module]
+
+    if st.button("Run benchmark comparison", type="primary", key="run_benchmark"):
+        client = _get_client()
+        if not client:
+            st.error("ANTHROPIC_API_KEY not set — cannot run benchmark.")
+        else:
+            with st.spinner(f"Comparing {chosen_module} against model policy..."):
+                for r in domain_gaps:
+                    key = f"{ss.selected_policy_code or 'la'}_{r['id']}"
+                    if key not in ss.benchmark_results:
+                        amended_text = r.get("revision", "")
+                        ss.benchmark_results[key] = compare_to_anthropic(r, amended_text, client)
+            st.rerun()
+
+    # Show any already-computed results for this domain
+    any_shown = False
+    for r in domain_gaps:
+        key = f"{ss.selected_policy_code or 'la'}_{r['id']}"
+        if key in ss.benchmark_results:
+            if not any_shown:
+                st.markdown(f"### {chosen_module} — {MODULES[chosen_module]}")
+                any_shown = True
+            tier = r["ag_test_tier"]
+            st.markdown(
+                f'<div style="border:1px solid {LINE};border-radius:8px;padding:14px 16px;margin:10px 0;background:#fff">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+                f'<span style="font-family:ui-monospace,Menlo,monospace;font-weight:700;color:{NAVY}">{r["id"]} · {r["term"]}</span>'
+                f'<span class="badge b-{tier}">{tier}</span></div>'
+                f'<div style="font-size:11.5px;color:{MUTED};font-family:ui-monospace,Menlo,monospace;margin-bottom:10px">{r["hook"]}</div>'
+                f'<div style="background:#f5f0ff;border:1px solid #c8b8f0;border-radius:6px;padding:12px 14px;color:#3d2b7a;font-size:13px;line-height:1.5">'
+                f'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#7a5bbf;font-weight:700;margin-bottom:6px">Model policy comparison</div>'
+                f'{ss.benchmark_results[key]}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+    if st.button("← Back to Policy Detail", key="benchmark_back"):
+        ss.view = "detail"
+        st.rerun()
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     st.set_page_config(
@@ -1152,6 +1257,8 @@ def main() -> None:
         view_overview()
     elif v == "gap":
         view_gap()
+    elif v == "benchmark":
+        view_benchmark()
     else:
         view_load_amend()
 
